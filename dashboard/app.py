@@ -58,8 +58,18 @@ st.caption(
 )
 
 if not (ROOT / "teiko.db").exists():
-    st.error("teiko.db not found. Run `python load_data.py` from the repo root first.")
-    st.stop()
+    # Auto-build on first launch — handles Streamlit Cloud, fresh clones,
+    # and any other context where `make pipeline` hasn't been run yet.
+    import load_data  # noqa: E402
+
+    if not (ROOT / "cell-count.csv").exists():
+        st.error("Neither teiko.db nor cell-count.csv found. The repo is incomplete.")
+        st.stop()
+    with st.spinner("Building teiko.db from cell-count.csv (one-time, ~10 sec)..."):
+        rc = load_data.main()
+    if rc != 0 or not (ROOT / "teiko.db").exists():
+        st.error("Database build failed. Check the server logs.")
+        st.stop()
 
 tab_overview, tab_compare, tab_subset = st.tabs(
     ["Part 2 — Per-sample frequencies", "Part 3 — Responders vs non-responders", "Part 4 — Baseline subset"]
