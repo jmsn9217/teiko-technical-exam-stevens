@@ -17,7 +17,8 @@ make dashboard   # serves the Streamlit app on http://localhost:8501
 
 ## Dashboard
 
-**Live link:** _to be deployed to Streamlit Community Cloud after submission._
+**Live link:** https://teiko-technical-exam-stevens-rfj8dkt6khgahiygqnmdye.streamlit.app/
+
 Run locally with `make dashboard`.
 
 The dashboard has three tabs, one per analytical part:
