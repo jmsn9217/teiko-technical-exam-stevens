@@ -1,0 +1,17 @@
+{
+  "n_samples_total": 656,
+  "samples_per_project": {
+    "prj1": 384,
+    "prj3": 272
+  },
+  "subjects_by_response": {
+    "yes": 331,
+    "no": 325
+  },
+  "subjects_by_sex": {
+    "M": 344,
+    "F": 312
+  },
+  "avg_b_cell_count_male_responders_baseline": 10401.28,
+  "n_male_responder_baseline_samples": 184
+}
