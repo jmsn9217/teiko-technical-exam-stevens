@@ -56,9 +56,6 @@ requirements.txt
 
 ## Database schema
 
-> The prompt references "indication" and "gender", but the CSV columns are
-> actually `condition` and `sex`. The schema uses the CSV's column names.
-
 ```
 projects(project_id PK)
 subjects(subject_id PK, project_id FK, condition, age, sex, treatment, response)
@@ -66,60 +63,35 @@ samples(sample_id PK, subject_id FK, sample_type, time_from_treatment_start)
 cell_counts(sample_id FK, population, count, PRIMARY KEY (sample_id, population))
 ```
 
-### Why this shape
+## Database Design Rationale
+Note: the prompt references 'indication' but the CSV column is 'condition'. This schema uses 'condition' to match the source data.
 
-- **Cell counts are stored long, not wide.** One row per `(sample_id, population)`
-  rather than one column per population. Adding or removing a cell population
-  is a row-level change, not a schema migration. Queries like "frequency by
-  population" become a clean `GROUP BY` instead of a `UNION ALL` across
-  columns.
-- **`total_count` and `percentage` are not stored.** They're computed at query
-  time (see `src/db.py`'s `summary_table`). Eliminates the risk of derived
-  values going stale when the underlying counts change, and removes a
-  consistency invariant the application would otherwise have to enforce.
-- **Subjects and samples are separate entities.** Subject-level attributes
-  (condition, age, sex, treatment, response) don't vary across samples from
-  the same subject, so they belong on the subject. Storing them on every sample
-  row would duplicate data and create the possibility of contradictory rows
-  ("subject X is M here, F there"). Splitting them also makes subject-level
-  filters (responders vs non-responders) cheap and unambiguous — no `DISTINCT`
-  needed.
-- **Projects are their own entity.** This makes it cheap to attach project
-  metadata later (sponsor, PI, start date) without touching subjects or
-  samples, and it leaves room for many-to-many subject-to-project mappings if
-  centralized subject records are ever needed.
-- **3NF.** Each non-key attribute depends only on its table's primary key.
+Cell counts get their own table with the PK being (sample_id, population), because this (long format) will make it easier to scale.
+Having one row per population sample means that adding or removing cell populations is as easy as adding or removing a row rather than a column, i.e. wouldn't require a schema change. 
+It also allows for easier analysis, e.g. querying with GROUP BY.
+The total_count and percentage should be computed at query time to ensure that the data is fresh.
 
-### Indexes (added in `load_data.py`)
+Separate domains for samples and subjects. 
+Ensures easy and accurate analysis of subject specific data. 
+If subject attributes were placed in each sample row, it would make things more complicated, like querying for responders vs. non-responders. 
+This way is more efficient as it eliminates the need for things like DISTINCT in queries.
+Normalized to 3NF. 
+Subject attributes don't vary within a subject, so they belong on the subject entity.
+This prevents inconsistency at scale.
+However, if you wanted to centralize subject data across projects, you could add a subject_attributes table (attributes_id PK, subject FK) with subject attributes that could vary depending on the project, but still map them back to the original subject record. Certain static attributes like date_of_birth, sex, etc could then be extracted and stored only on the subject record.
 
-| Index | Reason |
-|---|---|
-| `samples(subject_id)` | every analysis joins samples -> subjects |
-| `subjects(project_id)` | Part 4 groups by project |
-| `subjects(condition, treatment)` | Part 3 + Part 4 cohort filter |
-| `cell_counts(population)` | per-population aggregation in Parts 2-3 |
+Projects are a separate entity as well.
+Having projects as its own entity makes it easy to add project metadata (sponsor, start date, principal investigator).
+It also allows for the potential to merge and thus scale data more easily, for example to have one centralized table for all projects where multiple subjects could be mapped to multiple projects.
 
-### Scaling to hundreds of projects, thousands of samples, varied analytics
+Indexes to add at scale: 
+- samples(subject_id): supports joining sample data to subject attributes for any subject-level filtering (Parts 3 and 4 both need this).
+- subjects(project_id, condition, treatment): supports the Part 4 cohort filter (melanoma + miraclib + project breakdown).
+- cell_counts(population): supports per-population aggregation across samples (Parts 2 and 3).
 
-- **Storage stays linear.** Cell counts grow as `samples × populations`. Even
-  at 100k samples × 50 populations, that's 5M rows — comfortable for SQLite
-  and trivial for Postgres. The existing indexes keep the cohort filters
-  (Parts 3-4) on a B-tree path.
-- **Schema change cost stays low.** New cell populations are inserts. New
-  per-subject metadata is a column on `subjects` (or a join table if the
-  attribute is project-specific). The query layer (`src/db.py`) is the only
-  thing that needs to change downstream.
-- **Heavy analytics path.** When per-sample compute starts dominating (e.g.
-  recomputing percentages on every dashboard load gets slow), the right move
-  is a `sample_population_pct` materialized view refreshed on ingest, not
-  storing percentages on `cell_counts`. The schema doesn't change; only the
-  caching layer.
-- **Multi-project consolidation.** If subjects ever need to participate in
-  multiple projects, replace the `subjects.project_id` FK with a
-  `subject_projects(subject_id, project_id, enrolled_at, ...)` join table.
-  No data migration required for the existing tables.
-- **Postgres migration when SQLite stops fitting.** The schema is portable;
-  swap `sqlite3` for `psycopg2` and the SQL works as-is.
+This schema scales linearly. 
+The queries from Parts 2-4 become easy joins. 
+Aggregations, like relative frequency by sample, can be done via functions or views, which is great when the data scales up.
 
 ## Code structure overview
 
